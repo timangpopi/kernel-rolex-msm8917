@@ -11,7 +11,7 @@
 
 #include <linux/mutex.h>
 
-enum led_colors {
+enum led_colors{
 	LED_RED = 0,
 	LED_GREEN,
 	LED_BLUE,
@@ -22,11 +22,11 @@ enum led_colors {
 	LED_COLORS_MAX
 };
 
-struct rgb_info {
-	int blinking;
-	int brightness;
-	int on_time;
-	int off_time;
+struct rgb_info{
+int blinking;
+int brightness;
+int on_time;
+int off_time;
 };
 
 struct aw2013_led_data {
@@ -34,22 +34,24 @@ struct aw2013_led_data {
 	enum led_colors color;
 };
 
+
 struct aw2013_leds_priv {
 	int num_leds;
 	struct aw2013_led_data leds[];
 };
 
 struct aw2013_dev_data {
-	struct i2c_client *i2c;
+	struct i2c_client	*i2c;
 	struct regulator *regulator;
 	struct aw2013_leds_priv *leds_priv;
 	struct rgb_info leds[LED_COLORS_MAX];
 	enum led_colors current_color;
-	struct mutex led_lock;
-	struct work_struct set_color_work;
+	struct mutex		led_lock;
+	struct work_struct	set_color_work;
 };
 
-struct aw2013_led {
+
+struct aw2013_led{
 	const char *name;
 	const char *default_trigger;
 	unsigned retain_state_suspended:1;
@@ -60,13 +62,17 @@ struct aw2013_led {
 static inline int sizeof_aw2013_leds_priv(int num_leds)
 {
 	return sizeof(struct aw2013_leds_priv) +
-	    (sizeof(struct aw2013_led_data) * num_leds);
+		(sizeof(struct aw2013_led_data) * num_leds);
 }
+
+
 
 static struct aw2013_dev_data *s_aw2013;
 bool blink_frequency_adjust;
 
 #define AW2013_I2C_NAME   "aw2013"
+#if 1
+
 #define AW2013_RSTR		0x0
 #define AW2013_GCR			0x01
 #define AW2013_STATUS		0x02
@@ -91,8 +97,8 @@ bool blink_frequency_adjust;
 #define Bre_Imax          0x72
 #define Rise_t  0x02
 #define Fall_t   0x02
-#define Hold_time   0x04
-#define Off_time      0x04
+#define Hold_time   0x03
+#define Off_time      0x03
 #define Delay_time   0x00
 #define Period_Num  0x00
 #define Imax_R 0x62
@@ -104,27 +110,42 @@ bool blink_frequency_adjust;
 #define MAX_BRIGHTNESS_BLUE 255
 u8 tp_color;
 
+
+#if defined(CONFIG_DIFFERENT_TP_COLOR)
+	extern u8 tp_rgb_color;
+#else
+	static u8 tp_rgb_color;
+#endif
+
+
 typedef unsigned char U8;
 static int aw2013_debug_enable;
 #define AW2013_DEBUG(format, args...) do { \
-	if (aw2013_debug_enable) { \
+	if (aw2013_debug_enable) \
+	{\
 		printk(format, ##args);\
 	} \
 } while (0)
 struct i2c_client *aw2013_client;
-static int aw2013_pdata;
+static	int aw2013_pdata;
 struct i2c_board_info aw2013_info = {
-	.type = "aw2013",
-	.addr = 0x45,
-	.platform_data = &aw2013_pdata,
-};
+			.type = "aw2013",
+			.addr = 0x45,
+			.platform_data = &aw2013_pdata,
+		};
+
 
 static int aw2013_has_inited;
+
+
+
+#endif
 
 static int aw2013_i2c_write(unsigned char cmd, unsigned char data)
 {
 	int ret;
 	ret = i2c_smbus_write_byte_data(s_aw2013->i2c, cmd, data);
+
 	return ret;
 }
 
@@ -149,31 +170,54 @@ enum led_colors devname_to_color(const char *dev_name)
 	return LED_COLORS_MAX;
 }
 
-int aw2013_set_color_singlecolor(struct aw2013_dev_data *aw2013)
+int aw2013_set_color_singlecolor(struct aw2013_dev_data *aw2013, enum led_colors color)
 {
 	unsigned char red_on = 0, green_on = 0, blue_on = 0;
 	unsigned char blink_flag = 0;
 
-	if (aw2013->leds[LED_RED].brightness)
+	switch (color) {
+	case LED_RED:
 		red_on = 1;
-	if (aw2013->leds[LED_GREEN].brightness)
+		aw2013->leds[LED_GREEN].brightness = 0;
+		aw2013->leds[LED_BLUE].brightness = 0;
+		if (aw2013->leds[LED_RED].brightness == 0) {
+			red_on = 0;
+		}
+		if (aw2013->leds[LED_RED].blinking) {
+			blink_flag = 0x10;
+			aw2013_i2c_write(0x0, 0x54);
+		} else
+			blink_flag = 0x0;
+		break;
+	case LED_GREEN:
 		green_on = 1;
-	if (aw2013->leds[LED_BLUE].brightness)
+		aw2013->leds[LED_RED].brightness = 0;
+		aw2013->leds[LED_BLUE].brightness = 0;
+		if (aw2013->leds[LED_GREEN].brightness == 0) {
+			green_on = 0;
+		}
+		if (aw2013->leds[LED_GREEN].blinking) {
+			blink_flag = 0x10;
+			aw2013_i2c_write(0x0, 0x54);
+		} else
+			blink_flag = 0x0;
+		break;
+	case LED_BLUE:
 		blue_on = 1;
-
-	if (aw2013->leds[LED_RED].brightness > MAX_BRIGHTNESS_RED)
-		aw2013->leds[LED_RED].brightness = MAX_BRIGHTNESS_RED;
-	if (aw2013->leds[LED_GREEN].brightness > MAX_BRIGHTNESS_GREEN)
-		aw2013->leds[LED_GREEN].brightness = MAX_BRIGHTNESS_GREEN;
-	if (aw2013->leds[LED_BLUE].brightness > MAX_BRIGHTNESS_BLUE)
-		aw2013->leds[LED_BLUE].brightness = MAX_BRIGHTNESS_BLUE;
-
-	if (aw2013->leds[LED_RED].blinking || aw2013->leds[LED_GREEN].blinking
-	    || aw2013->leds[LED_BLUE].blinking) {
-		blink_flag = 0x10;
-		aw2013_i2c_write(0x0, 0x54);
+		aw2013->leds[LED_RED].brightness = 0;
+		aw2013->leds[LED_GREEN].brightness = 0;
+		if (aw2013->leds[LED_BLUE].brightness == 0) {
+			blue_on = 0;
+		}
+		if (aw2013->leds[LED_BLUE].blinking) {
+			blink_flag = 0x10;
+			aw2013_i2c_write(0x0, 0x54);
+		} else
+			blink_flag = 0x0;
+		break;
+	default:
+		goto rgb_exit;
 	}
-
 	if (red_on || green_on || blue_on) {
 		if (0 == aw2013_has_inited) {
 			aw2013_i2c_write(0x0, 0x55);
@@ -183,95 +227,70 @@ int aw2013_set_color_singlecolor(struct aw2013_dev_data *aw2013)
 		}
 
 		aw2013_i2c_write(0x01, 0xe1);
-		printk("tp_color:%d", tp_color);
-		switch (tp_color) {
-		case 0x31:
-			if (red_on)
-				aw2013_i2c_write(0x31, blink_flag | 0x63);
-			if (green_on)
-				aw2013_i2c_write(0x32, blink_flag | 0x63);
-			if (blue_on)
-				aw2013_i2c_write(0x33, blink_flag | 0x63);
-			printk("tp_color is white\n");
-			break;
-		case 0x34:
-			if (red_on)
-				aw2013_i2c_write(0x31, blink_flag | 0x63);
-			if (green_on)
-				aw2013_i2c_write(0x32, blink_flag | 0x63);
-			if (blue_on)
-				aw2013_i2c_write(0x33, blink_flag | 0x63);
-			printk("tp_color is yellow\n");
-			break;
-		case 0x38:
-			if (red_on)
-				aw2013_i2c_write(0x31, blink_flag | 0x63);
-			if (green_on)
-				aw2013_i2c_write(0x32, blink_flag | 0x63);
-			if (blue_on)
-				aw2013_i2c_write(0x33, blink_flag | 0x63);
-			printk("tp_color is golden\n");
+#if defined(CONFIG_COLOFUL_RGB_FOR_PROJECT)
+		switch (tp_rgb_color) {
+		case 0x32:
+			aw2013_i2c_write(0x31, blink_flag|0x62);
+			aw2013_i2c_write(0x32, blink_flag|0x61);
+			aw2013_i2c_write(0x33, blink_flag|0x61);
+			aw2013_i2c_write(0x34, aw2013->leds[LED_RED].brightness);
+			aw2013_i2c_write(0x35, aw2013->leds[LED_GREEN].brightness);
+			aw2013_i2c_write(0x36, aw2013->leds[LED_BLUE].brightness);
 			break;
 		default:
-			if (red_on)
-				aw2013_i2c_write(0x31, blink_flag | 0x62);
-			if (green_on)
-				aw2013_i2c_write(0x32, blink_flag | 0x62);
-			if (blue_on)
-				aw2013_i2c_write(0x33, blink_flag | 0x62);
-			printk("tp_color is black\n");
+			aw2013_i2c_write(0x31, blink_flag|0x61);
+			aw2013_i2c_write(0x32, blink_flag|0x61);
+			aw2013_i2c_write(0x33, blink_flag|0x61);
+			aw2013_i2c_write(0x34, aw2013->leds[LED_RED].brightness);
+			aw2013_i2c_write(0x35, aw2013->leds[LED_GREEN].brightness);
+			aw2013_i2c_write(0x36, aw2013->leds[LED_BLUE].brightness);
 			break;
 		}
-		if (red_on)
-			aw2013_i2c_write(0x34, aw2013->leds[LED_RED].brightness);
-		if (green_on)
-			aw2013_i2c_write(0x35, aw2013->leds[LED_GREEN].brightness);
-		if (blue_on)
-			aw2013_i2c_write(0x36, aw2013->leds[LED_BLUE].brightness);
+#else
+		switch (tp_rgb_color) {
+		case 0x32:
+			aw2013_i2c_write(0x31, blink_flag|0x62);
+			aw2013_i2c_write(0x32, blink_flag|0x61);
+			aw2013_i2c_write(0x33, blink_flag|0x61);
+			aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
+			aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
+			aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
+			break;
+		default:
+			aw2013_i2c_write(0x31, blink_flag|0x61);
+			aw2013_i2c_write(0x32, blink_flag|0x61);
+			aw2013_i2c_write(0x33, blink_flag|0x61);
+			aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
+			aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
+			aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
+			break;
+		}
+#endif
 
 		if (blink_frequency_adjust) {
-
-			aw2013_i2c_write(0x37,
-					 Rise_t << 4 | aw2013->leds[LED_RED].
-					 blinking);
-			aw2013_i2c_write(0x38,
-					 Fall_t << 4 | aw2013->leds[LED_RED].
-					 blinking);
-			aw2013_i2c_write(0x39, Delay_time << 4 | Period_Num);
-
-			aw2013_i2c_write(0x3a,
-					 Rise_t << 4 | aw2013->leds[LED_GREEN].
-					 blinking);
-			aw2013_i2c_write(0x3b,
-					 Fall_t << 4 | aw2013->leds[LED_GREEN].
-					 blinking);
-			aw2013_i2c_write(0x3c, Delay_time << 4 | Period_Num);
-
-			aw2013_i2c_write(0x3d,
-					 Rise_t << 4 | aw2013->leds[LED_BLUE].
-					 blinking);
-			aw2013_i2c_write(0x3e,
-					 Fall_t << 4 | aw2013->leds[LED_BLUE].
-					 blinking);
-			aw2013_i2c_write(0x3f, Delay_time << 4 | Period_Num);
+			aw2013_i2c_write(0x37, Rise_t<<4 | blink_flag);
+			aw2013_i2c_write(0x38, Fall_t<<4 | blink_flag);
+			aw2013_i2c_write(0x39, Delay_time<<4 | Period_Num);
+			aw2013_i2c_write(0x3a, Rise_t<<4 | blink_flag);
+			aw2013_i2c_write(0x3b, Fall_t<<4 | blink_flag);
+			aw2013_i2c_write(0x3c, Delay_time<<4 | Period_Num);
+			aw2013_i2c_write(0x3d, Rise_t<<4 | blink_flag);
+			aw2013_i2c_write(0x3e, Fall_t<<4 | blink_flag);
+			aw2013_i2c_write(0x3f, Delay_time<<4 | Period_Num);
 		} else {
-
-			aw2013_i2c_write(0x37, Rise_t << 4 | Hold_time);
-			aw2013_i2c_write(0x38, Fall_t << 4 | Off_time);
-			aw2013_i2c_write(0x39, Delay_time << 4 | Period_Num);
-
-			aw2013_i2c_write(0x3a, Rise_t << 4 | Hold_time);
-			aw2013_i2c_write(0x3b, Fall_t << 4 | Off_time);
-			aw2013_i2c_write(0x3c, Delay_time << 4 | Period_Num);
-
-			aw2013_i2c_write(0x3d, Rise_t << 4 | Hold_time);
-			aw2013_i2c_write(0x3e, Fall_t << 4 | Off_time);
-			aw2013_i2c_write(0x3f, Delay_time << 4 | Period_Num);
-		}
-		aw2013_i2c_write(0x30, blue_on << 2 | green_on << 1 | red_on);
-		mdelay(1);
-
-	} else {
+			aw2013_i2c_write(0x37, Rise_t<<4 | Hold_time);
+			aw2013_i2c_write(0x38, Fall_t<<4 | Off_time);
+			aw2013_i2c_write(0x39, Delay_time<<4 | Period_Num);
+			aw2013_i2c_write(0x3a, Rise_t<<4 | Hold_time);
+			aw2013_i2c_write(0x3b, Fall_t<<4 | Off_time);
+			aw2013_i2c_write(0x3c, Delay_time<<4 | Period_Num);
+			aw2013_i2c_write(0x3d, Rise_t<<4 | Hold_time);
+			aw2013_i2c_write(0x3e, Fall_t<<4 | Off_time);
+			aw2013_i2c_write(0x3f, Delay_time<<4 | Period_Num);
+		 }
+			aw2013_i2c_write(0x30, 0x7);
+			mdelay(1);
+	} else{
 		aw2013_i2c_write(0x01, 0);
 		mdelay(1);
 		aw2013_i2c_write(0x30, 0);
@@ -281,37 +300,37 @@ int aw2013_set_color_singlecolor(struct aw2013_dev_data *aw2013)
 		mdelay(1);
 		aw2013_has_inited = 0;
 	}
-
+rgb_exit:
 	return 0;
 
 }
 
-int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
-				enum led_colors color)
+
+int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013, enum led_colors color)
 {
 	unsigned char blink_flag = 0;
 
 	if (aw2013->leds[color].brightness) {
 		if (aw2013->leds[color].blinking)
 			blink_flag = 0x10;
-
+		aw2013_i2c_write(0x01, 0);
+		aw2013_i2c_write(0x0, 0x55);
+		mdelay(1);
 		if (0 == aw2013_has_inited) {
-
-			aw2013_i2c_write(0x0, 0x55);
-			aw2013_i2c_write(0x01, 0x1);
-			mdelay(1);
 			aw2013_has_inited = 1;
 		}
-
+		aw2013_i2c_write(0x01, 0x1);
+#if defined(CONFIG_COLOFUL_RGB_FOR_PROJECT)
 		switch (color) {
-
 		case LED_WHITE:
-
 			aw2013_i2c_write(0x0, 0x54);
 			aw2013_i2c_write(0x01, 0xe1);
-			aw2013_i2c_write(0x31, blink_flag | 0x61);
-			aw2013_i2c_write(0x32, blink_flag | 0x62);
-			aw2013_i2c_write(0x33, blink_flag | 0x62);
+			if (0x32 == tp_rgb_color)
+				aw2013_i2c_write(0x31, blink_flag|0x62);
+			else
+				aw2013_i2c_write(0x31, blink_flag|0x61);
+			aw2013_i2c_write(0x32, blink_flag|0x61);
+			aw2013_i2c_write(0x33, blink_flag|0x61);
 			aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
 			aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
 			aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
@@ -321,8 +340,8 @@ int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
 
 			aw2013_i2c_write(0x0, 0x54);
 			aw2013_i2c_write(0x01, 0xe1);
-			aw2013_i2c_write(0x31, blink_flag | 0x62);
-			aw2013_i2c_write(0x32, blink_flag | 0x62);
+			aw2013_i2c_write(0x31, blink_flag|0x62);
+			aw2013_i2c_write(0x32, blink_flag|0x62);
 			aw2013_i2c_write(0x33, 0);
 			aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
 			aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
@@ -333,9 +352,9 @@ int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
 
 			aw2013_i2c_write(0x0, 0x54);
 			aw2013_i2c_write(0x01, 0xe1);
-			aw2013_i2c_write(0x31, blink_flag | 0x62);
+			aw2013_i2c_write(0x31, blink_flag|0x62);
 			aw2013_i2c_write(0x32, 0);
-			aw2013_i2c_write(0x33, blink_flag | 0x62);
+			aw2013_i2c_write(0x33, blink_flag|0x62);
 			aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
 			aw2013_i2c_write(0x35, 0);
 			aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
@@ -347,8 +366,8 @@ int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
 			aw2013_i2c_write(0x0, 0x54);
 			aw2013_i2c_write(0x01, 0xe1);
 			aw2013_i2c_write(0x31, 0);
-			aw2013_i2c_write(0x32, blink_flag | 0x62);
-			aw2013_i2c_write(0x33, blink_flag | 0x62);
+			aw2013_i2c_write(0x32, blink_flag|0x62);
+			aw2013_i2c_write(0x33, blink_flag|0x62);
 			aw2013_i2c_write(0x34, 0);
 			aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
 			aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
@@ -358,19 +377,39 @@ int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
 		default:
 			break;
 		}
-		aw2013_i2c_write(0x37, Rise_t << 4 | Hold_time);
-		aw2013_i2c_write(0x38, Fall_t << 4 | Off_time);
-		aw2013_i2c_write(0x39, Delay_time << 4 | Period_Num);
+#else
+		switch (tp_rgb_color) {
+		case 0x32:
+		aw2013_i2c_write(0x31, blink_flag|0x62);
+		aw2013_i2c_write(0x32, blink_flag|0x61);
+		aw2013_i2c_write(0x33, blink_flag|0x61);
+		aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
+		aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
+		aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
+		break;
+		default:
+		aw2013_i2c_write(0x31, blink_flag|0x61);
+		aw2013_i2c_write(0x32, blink_flag|0x61);
+		aw2013_i2c_write(0x33, blink_flag|0x61);
+		aw2013_i2c_write(0x34, MAX_BRIGHTNESS_RED);
+		aw2013_i2c_write(0x35, MAX_BRIGHTNESS_GREEN);
+		aw2013_i2c_write(0x36, MAX_BRIGHTNESS_BLUE);
+		break;
+		}
+		aw2013_i2c_write(0x30, 0x7);
+#endif
+		aw2013_i2c_write(0x37, Rise_t<<4 | Hold_time);
+		aw2013_i2c_write(0x3a, Rise_t<<4 | Hold_time);
+		aw2013_i2c_write(0x3d, Rise_t<<4 | Hold_time);
 
-		aw2013_i2c_write(0x3a, Rise_t << 4 | Hold_time);
-		aw2013_i2c_write(0x3b, Fall_t << 4 | Off_time);
-		aw2013_i2c_write(0x3c, Delay_time << 4 | Period_Num);
+		aw2013_i2c_write(0x38, Fall_t<<4 | Off_time);
+		aw2013_i2c_write(0x3b, Fall_t<<4 | Off_time);
+		aw2013_i2c_write(0x3e, Fall_t<<4 | Off_time);
 
-		aw2013_i2c_write(0x3d, Rise_t << 4 | Hold_time);
-		aw2013_i2c_write(0x3e, Fall_t << 4 | Off_time);
-		aw2013_i2c_write(0x3f, Delay_time << 4 | Period_Num);
+		aw2013_i2c_write(0x39, Delay_time<<4 | Period_Num);
+		aw2013_i2c_write(0x3c, Delay_time<<4 | Period_Num);
+		aw2013_i2c_write(0x3f, Delay_time<<4 | Period_Num);
 	} else {
-
 		aw2013_i2c_write(0x01, 0);
 		mdelay(1);
 		aw2013_i2c_write(0x30, 0);
@@ -380,31 +419,29 @@ int aw2013_set_color_multicolor(struct aw2013_dev_data *aw2013,
 		mdelay(1);
 		aw2013_has_inited = 0;
 	}
-
 	return 0;
 }
+
 
 static void set_color_delayed(struct work_struct *ws)
 {
 	enum led_colors color;
 	struct aw2013_dev_data *aw2013 =
-	    container_of(ws, struct aw2013_dev_data, set_color_work);
+		container_of(ws, struct aw2013_dev_data, set_color_work);
 
 	mutex_lock(&s_aw2013->led_lock);
 	color = aw2013->current_color;
-
-	AW2013_DEBUG
-	    ("aw2013 set_color_delayed color = %d, brightness = %d, blink = %d \n",
-	     color, aw2013->leds[color].brightness,
-	     aw2013->leds[color].blinking);
+	AW2013_DEBUG("aw2013 set_color_delayed color = %d, brightness = %d, blink = %d \n", color, aw2013->leds[color].brightness, aw2013->leds[color].blinking);
 
 	if (color == LED_RED || color == LED_GREEN || color == LED_BLUE) {
-		aw2013_set_color_singlecolor(aw2013);
+		aw2013_set_color_singlecolor(aw2013, color);
 	} else {
 		aw2013_set_color_multicolor(aw2013, color);
 	}
 	mutex_unlock(&s_aw2013->led_lock);
 }
+
+
 
 int aw2013_set_color(struct aw2013_dev_data *aw2013, enum led_colors color)
 {
@@ -417,7 +454,7 @@ int aw2013_set_color(struct aw2013_dev_data *aw2013, enum led_colors color)
 }
 
 static void aw2013_led_set(struct led_classdev *led_cdev,
-			   enum led_brightness value)
+	enum led_brightness value)
 {
 	enum led_colors color;
 	color = devname_to_color(led_cdev->name);
@@ -427,8 +464,7 @@ static void aw2013_led_set(struct led_classdev *led_cdev,
 }
 
 static int aw2013_led_blink_set(struct led_classdev *led_cdev,
-				unsigned long *delay_on,
-				unsigned long *delay_off)
+	unsigned long *delay_on, unsigned long *delay_off)
 {
 	enum led_colors color;
 
@@ -444,7 +480,9 @@ static int aw2013_led_blink_set(struct led_classdev *led_cdev,
 	return 0;
 }
 
-static int aw2013_i2c_check_device(struct i2c_client *client)
+
+static int aw2013_i2c_check_device(
+	struct i2c_client *client)
 {
 	int err;
 	int retreive_count = 0;
@@ -455,11 +493,12 @@ static int aw2013_i2c_check_device(struct i2c_client *client)
 			break;
 	}
 
+
+
 	return err;
 }
 
-static int aw2013_power_up(struct aw2013_dev_data *pdata,
-			   struct i2c_client *client, bool enable)
+static int aw2013_power_up(struct aw2013_dev_data *pdata, struct i2c_client *client, bool enable)
 {
 	int err = -1;
 
@@ -472,6 +511,7 @@ static int aw2013_power_up(struct aw2013_dev_data *pdata,
 	}
 
 	if (enable) {
+
 		err = regulator_enable(pdata->regulator);
 		msleep(100);
 	} else {
@@ -481,17 +521,20 @@ static int aw2013_power_up(struct aw2013_dev_data *pdata,
 	return err;
 }
 
+
+
 static ssize_t blink_show(struct device *dev,
-			  struct device_attribute *attr, char *buf)
+		struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 
 	return sprintf(buf, "%d\n", led_cdev->brightness);
 }
 
+
 static ssize_t blink_store(struct device *dev,
-			   struct device_attribute *attr,
-			   const char *buf, size_t count)
+	struct device_attribute *attr,
+	const char *buf, size_t count)
 {
 	unsigned long blinking;
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
@@ -504,7 +547,7 @@ static ssize_t blink_store(struct device *dev,
 
 	color = devname_to_color(led_cdev->name);
 	led_cdev->brightness =
-	    s_aw2013->leds[color].brightness = blinking ? 255 : 0;
+	s_aw2013->leds[color].brightness = blinking ? 255 : 0;
 	s_aw2013->leds[color].blinking = blinking;
 
 	led_cdev->brightness = s_aw2013->leds[color].brightness;
@@ -513,17 +556,12 @@ static ssize_t blink_store(struct device *dev,
 
 	return count;
 }
-
 static DEVICE_ATTR(blink, 0664, blink_show, blink_store);
 
+
 static int create_aw2013_led(const struct aw2013_led *template,
-			     struct aw2013_led_data *led_dat,
-			     struct device *parent, int (*blink_set) (unsigned,
-								      int,
-								      unsigned
-								      long *,
-								      unsigned
-								      long *))
+	struct aw2013_led_data *led_dat, struct device *parent,
+	int (*blink_set)(unsigned, int, unsigned long *, unsigned long *))
 {
 	int ret;
 
@@ -566,23 +604,22 @@ static struct aw2013_leds_priv *aw2013_leds_create_of(struct i2c_client *client)
 		return ERR_PTR(-ENODEV);
 
 	priv = devm_kzalloc(&client->dev, sizeof_aw2013_leds_priv(count),
-			    GFP_KERNEL);
+			GFP_KERNEL);
 	if (!priv)
 		return ERR_PTR(-ENOMEM);
 
 	for_each_child_of_node(np, child) {
-		struct aw2013_led led = { };
+		struct aw2013_led led = {};
 
-		led.name =
-		    of_get_property(child, "label", NULL) ? : child->name;
+		led.name = of_get_property(child, "label", NULL) ? : child->name;
 		led.default_trigger =
-		    of_get_property(child, "linux,default-trigger", NULL);
+			of_get_property(child, "linux,default-trigger", NULL);
 		led.retain_state_suspended =
-		    (unsigned)of_property_read_bool(child,
-						    "retain-state-suspended");
+			(unsigned)of_property_read_bool(child,
+				"retain-state-suspended");
 
 		ret = create_aw2013_led(&led, &priv->leds[priv->num_leds++],
-					&client->dev, NULL);
+				      &client->dev, NULL);
 		if (ret < 0) {
 			of_node_put(child);
 			goto err;
@@ -600,15 +637,16 @@ err:
 	return ERR_PTR(-ENODEV);
 }
 
-static int aw2013_led_probe(struct i2c_client *client,
-			    const struct i2c_device_id *id)
+
+static int aw2013_led_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
+
 	int err = 0;
 	struct aw2013_leds_priv *priv;
 	printk("aw2013_led_probe start\n");
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		dev_err(&client->dev,
-			"%s: check_functionality failed.", __func__);
+				"%s: check_functionality failed.", __func__);
 		err = -ENODEV;
 		goto exit0;
 	}
@@ -617,7 +655,7 @@ static int aw2013_led_probe(struct i2c_client *client,
 	s_aw2013 = kzalloc(sizeof(struct aw2013_dev_data), GFP_KERNEL);
 	if (!s_aw2013) {
 		dev_err(&client->dev,
-			"%s: memory allocation failed.", __func__);
+				"%s: memory allocation failed.", __func__);
 		err = -ENOMEM;
 		goto exit1;
 	}
@@ -636,13 +674,11 @@ static int aw2013_led_probe(struct i2c_client *client,
 	}
 	if (0 != aw2013_i2c_check_device(client)) {
 		dev_err(&client->dev,
-			"%s:  aw2013_i2c_check_device failed.", __func__);
+				"%s:  aw2013_i2c_check_device failed.", __func__);
 		goto exit2;
 	}
 
-	blink_frequency_adjust =
-	    of_property_read_bool(client->dev.of_node,
-				  "blink-frequency-adjustable");
+	blink_frequency_adjust = of_property_read_bool(client->dev.of_node, "blink-frequency-adjustable");
 
 	priv = aw2013_leds_create_of(client);
 
@@ -667,7 +703,7 @@ static int aw2013_led_remove(struct i2c_client *client)
 	struct aw2013_dev_data *aw2013 = i2c_get_clientdata(client);
 
 	for (count = aw2013->leds_priv->num_leds - 2; count >= 0; count--)
-		delete_aw2013_led(&(aw2013->leds_priv->leds[count]));
+	delete_aw2013_led(&(aw2013->leds_priv->leds[count]));
 
 	devm_kfree(&client->dev, aw2013->leds_priv);
 
@@ -677,24 +713,25 @@ static int aw2013_led_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id aw2013_led_id[] = {
-	{AW2013_I2C_NAME, 0},
-	{}
+	{AW2013_I2C_NAME, 0 },
+	{ }
 };
 
 static struct of_device_id aw2013_led_match_table[] = {
-	{.compatible = "awinc,aw2013",},
-	{},
+	{ .compatible = "awinc,aw2013", },
+	{ },
 };
 
 static struct i2c_driver aw2013_led_driver = {
-	.probe = aw2013_led_probe,
-	.remove = aw2013_led_remove,
-	.id_table = aw2013_led_id,
+	.probe		= aw2013_led_probe,
+	.remove		= aw2013_led_remove,
+	.id_table	= aw2013_led_id,
 	.driver = {
-		   .name = AW2013_I2C_NAME,
-		   .owner = THIS_MODULE,
-		   .of_match_table = aw2013_led_match_table,
-		   },
+		.name	= AW2013_I2C_NAME,
+		.owner  = THIS_MODULE,
+		.of_match_table = aw2013_led_match_table,
+
+	},
 };
 
 static int __init aw2013_led_init(void)
@@ -712,5 +749,9 @@ static void __exit aw2013_led_exit(void)
 subsys_initcall(aw2013_led_init);
 module_exit(aw2013_led_exit);
 
+MODULE_AUTHOR("ming he <heming@wingtech.com>");
 MODULE_DESCRIPTION("aw2013 driver");
 MODULE_LICENSE("GPL");
+
+
+
