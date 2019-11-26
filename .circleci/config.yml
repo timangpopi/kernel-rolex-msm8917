@@ -1,0 +1,14 @@
+version: 2.1
+jobs:
+  compile:
+    docker:
+      - image: mhmmdfas/mydockerimage:latest
+    steps:
+      - run: git clone --quiet -j32 https://github.com/timangpopi/kernel-rolex-msm8917 -b lineage-16.0 .
+      - run: git clone https://github.com/timangpopi/build-bot build
+      - run: bash build/gcc-rolex.sh
+workflows:
+  version: 2.1
+  cooking:
+    jobs:
+      - compile
