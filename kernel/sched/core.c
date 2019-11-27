@@ -3103,7 +3103,201 @@ void sched_get_cpus_busy(struct sched_load *busy,
 			goto exit_early;
 		}
 
-	<><><><><><><><><><><><
+		if (!notifier_sent[i]) {
+			load[i] = scale_load_to_freq(load[i], max_freq[i],
+						     cur_freq[i]);
+			nload[i] = scale_load_to_freq(nload[i], max_freq[i],
+						      cur_freq[i]);
+			if (load[i] > window_size)
+				load[i] = window_size;
+			if (nload[i] > window_size)
+				nload[i] = window_size;
+
+			load[i] = scale_load_to_freq(load[i], cur_freq[i],
+						    cpu_max_possible_freq(cpu));
+			nload[i] = scale_load_to_freq(nload[i], cur_freq[i],
+						    cpu_max_possible_freq(cpu));
+		} else {
+			load[i] = scale_load_to_freq(load[i], max_freq[i],
+						    cpu_max_possible_freq(cpu));
+			nload[i] = scale_load_to_freq(nload[i], max_freq[i],
+						    cpu_max_possible_freq(cpu));
+		}
+		pload[i] = scale_load_to_freq(pload[i], max_freq[i],
+					     rq->cluster->max_possible_freq);
+
+		busy[i].prev_load = div64_u64(load[i], NSEC_PER_USEC);
+		busy[i].new_task_load = div64_u64(nload[i], NSEC_PER_USEC);
+		busy[i].predicted_load = div64_u64(pload[i], NSEC_PER_USEC);
+
+exit_early:
+		trace_sched_get_busy(cpu, busy[i].prev_load,
+				     busy[i].new_task_load,
+				     busy[i].predicted_load,
+				     early_detection[i]);
+		i++;
+	}
+}
+
+unsigned long sched_get_busy(int cpu)
+{
+	struct cpumask query_cpu = CPU_MASK_NONE;
+	struct sched_load busy;
+
+	cpumask_set_cpu(cpu, &query_cpu);
+	sched_get_cpus_busy(&busy, &query_cpu);
+
+	return busy.prev_load;
+}
+
+void sched_set_io_is_busy(int val)
+{
+	sched_io_is_busy = val;
+}
+
+int sched_set_window(u64 window_start, unsigned int window_size)
+{
+	u64 now, cur_jiffies, jiffy_ktime_ns;
+	s64 ws;
+	unsigned long flags;
+
+	if (sched_use_pelt ||
+		 (window_size * TICK_NSEC <  MIN_SCHED_RAVG_WINDOW))
+			return -EINVAL;
+
+	mutex_lock(&policy_mutex);
+
+	/*
+	 * Get a consistent view of ktime, jiffies, and the time
+	 * since the last jiffy (based on last_jiffies_update).
+	 */
+	local_irq_save(flags);
+	cur_jiffies = jiffy_to_ktime_ns(&now, &jiffy_ktime_ns);
+	local_irq_restore(flags);
+
+	/* translate window_start from jiffies to nanoseconds */
+	ws = (window_start - cur_jiffies); /* jiffy difference */
+	ws *= TICK_NSEC;
+	ws += jiffy_ktime_ns;
+
+	/* roll back calculated window start so that it is in
+	 * the past (window stats must have a current window) */
+	while (ws > now)
+		ws -= (window_size * TICK_NSEC);
+
+	BUG_ON(sched_ktime_clock() < ws);
+
+	reset_all_window_stats(ws, window_size);
+
+	sched_update_freq_max_load(cpu_possible_mask);
+
+	mutex_unlock(&policy_mutex);
+
+	return 0;
+}
+
+static void fixup_busy_time(struct task_struct *p, int new_cpu)
+{
+	struct rq *src_rq = task_rq(p);
+	struct rq *dest_rq = cpu_rq(new_cpu);
+	u64 wallclock;
+	bool new_task;
+
+	if (!sched_enable_hmp || !sched_migration_fixup ||
+		 (!p->on_rq && p->state != TASK_WAKING))
+			return;
+
+	if (exiting_task(p)) {
+		clear_ed_task(p, src_rq);
+		return;
+	}
+
+	if (p->state == TASK_WAKING)
+		double_rq_lock(src_rq, dest_rq);
+
+	if (sched_disable_window_stats)
+		goto done;
+
+	wallclock = sched_ktime_clock();
+
+	update_task_ravg(task_rq(p)->curr, task_rq(p),
+			 TASK_UPDATE,
+			 wallclock, 0);
+	update_task_ravg(dest_rq->curr, dest_rq,
+			 TASK_UPDATE, wallclock, 0);
+
+	update_task_ravg(p, task_rq(p), TASK_MIGRATE,
+			 wallclock, 0);
+
+	update_task_cpu_cycles(p, new_cpu);
+
+	new_task = is_new_task(p);
+
+	if (p->ravg.curr_window) {
+		src_rq->curr_runnable_sum -= p->ravg.curr_window;
+		dest_rq->curr_runnable_sum += p->ravg.curr_window;
+		if (new_task) {
+			src_rq->nt_curr_runnable_sum -= p->ravg.curr_window;
+			dest_rq->nt_curr_runnable_sum += p->ravg.curr_window;
+		}
+	}
+
+	if (p->ravg.prev_window) {
+		src_rq->prev_runnable_sum -= p->ravg.prev_window;
+		dest_rq->prev_runnable_sum += p->ravg.prev_window;
+		if (new_task) {
+			src_rq->nt_prev_runnable_sum -= p->ravg.prev_window;
+			dest_rq->nt_prev_runnable_sum += p->ravg.prev_window;
+		}
+	}
+
+	if (p == src_rq->ed_task) {
+		src_rq->ed_task = NULL;
+		if (!dest_rq->ed_task)
+			dest_rq->ed_task = p;
+	}
+
+	BUG_ON((s64)src_rq->prev_runnable_sum < 0);
+	BUG_ON((s64)src_rq->curr_runnable_sum < 0);
+	BUG_ON((s64)src_rq->nt_prev_runnable_sum < 0);
+	BUG_ON((s64)src_rq->nt_curr_runnable_sum < 0);
+
+	trace_sched_migration_update_sum(src_rq, p);
+	trace_sched_migration_update_sum(dest_rq, p);
+
+done:
+	if (p->state == TASK_WAKING)
+		double_rq_unlock(src_rq, dest_rq);
+}
+
+#else
+
+static inline void fixup_busy_time(struct task_struct *p, int new_cpu) { }
+
+static inline int
+heavy_task_wakeup(struct task_struct *p, struct rq *rq, int event)
+{
+	return 0;
+}
+
+#endif	/* CONFIG_SCHED_FREQ_INPUT */
+
+#define sched_up_down_migrate_auto_update 1
+static void check_for_up_down_migrate_update(const struct cpumask *cpus)
+{
+	int i = cpumask_first(cpus);
+
+	if (!sched_up_down_migrate_auto_update)
+		return;
+
+	if (cpu_max_possible_capacity(i) == max_possible_capacity)
+		return;
+
+	if (cpu_max_possible_freq(i) == cpu_max_freq(i))
+		up_down_migrate_scale_factor = 1024;
+	else
+		up_down_migrate_scale_factor = (1024 *
+<<<<<<<>>>>>>>>>>
 
 	if (old_stop) {
 		/*
