@@ -966,7 +966,7 @@ void sched_set_stop_task(int cpu, struct task_struct *stop)
 	}
 
 	cpu_rq(cpu)->stop = stop;
-<<<<<<< HEAD katanya
+<<<<<<< HEAD
 
 	if (old_stop) {
 		/*
